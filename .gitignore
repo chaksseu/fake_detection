@@ -1,0 +1,7 @@
+*.pt
+*.tif
+*.jpg
+*.jpeg
+*.png
+*.csv
+data/raw/rotated
