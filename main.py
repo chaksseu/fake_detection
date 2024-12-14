@@ -7,25 +7,26 @@ import torch
 import torch.nn as nn
 import torch.optim as optim
 from torchvision import models, transforms
-from data.dataset import FD_Dataset
+from data.dataset import ANP_Dataset, eval_AP_Dataset
 from torch.nn.functional import normalize
+from tqdm import tqdm
 
 def parse_args():
     parser = argparse.ArgumentParser(description="Contrastive Learning Training")
     # Paths
-    parser.add_argument("--data_path", type=str, required=True, help="Path to the processed dataset base")
-    parser.add_argument("--raw_data_path", type=str, required=True, help="Path to the raw dataset base")
+    parser.add_argument("--augmented_file_path", type=str, required=True, help="Path to the processed dataset base")
     parser.add_argument("--output_dir", type=str, default="./checkpoints", help="Path to save models and logs")
 
     # Training parameters
     parser.add_argument("--batch_size", type=int, default=16, help="Batch size")
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
-    parser.add_argument("--eval_every", type=int, default=1, help="Evaluate and save model every n epochs")
+    parser.add_argument("--eval_epoch", type=int, default=1, help="Evaluate every n epochs")
+    parser.add_argument("--save_epoch", type=int, default=1, help="Save model every n epochs")
+    parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for DataLoader")
 
     # Model parameters
-    parser.add_argument("--resnet_type", type=str, default="resnet18", choices=["resnet18", "resnet50"], help="Type of ResNet backbone")
-    parser.add_argument("--pretrained", action="store_true", help="Use pretrained ResNet")
+    parser.add_argument("--pretrained", action="store_true", help="Use pretrained ConvNeXt")
 
     # W&B
     parser.add_argument("--wandb_project", type=str, default="contrastive_learning", help="Wandb project name")
@@ -35,65 +36,100 @@ def parse_args():
     args = parser.parse_args()
     return args
 
-def get_model(resnet_type="resnet18", pretrained=True):
-    if resnet_type == "resnet18":
-        model = models.resnet18(pretrained=pretrained)
-    elif resnet_type == "resnet50":
-        model = models.resnet50(pretrained=pretrained)
-    model.fc = nn.Identity()
+def get_model(pretrained=True):
+    # ConvNeXt Small 모델 사용
+    model = models.convnext_small(pretrained=pretrained)
+    # 마지막 Linear 제거 -> 임베딩 추출용
+    model.classifier[2] = nn.Identity()
     return model
 
-def collate_fn(batch):
+def collate_fn_triplet(batch):
+    # ANP_Dataset에서 anchor, positive, negative를 반환한다고 가정
     anchors = []
     positives = []
     negatives = []
     for b in batch:
-        anchors.append(b['anchor'])     # Tensor
-        positives.append(b['positive']) # Tensor
-        negatives.append(b['negative']) # Tensor
+        anchors.append(b['anchor'])
+        positives.append(b['positive'])
+        negatives.append(b['negative'])
 
     anchors = torch.stack(anchors)
     positives = torch.stack(positives)
     negatives = torch.stack(negatives)
-
     return anchors, positives, negatives
+
+def collate_fn_eval(batch):
+    # AP_Dataset에서 anchor, image, label 을 반환한다고 가정
+    anchors = []
+    images = []
+    labels = []
+    for b in batch:
+        anchors.append(b['anchor'])
+        images.append(b['image'])
+        labels.append(b['label'])
+    anchors = torch.stack(anchors)
+    images = torch.stack(images)
+    return anchors, images, labels
+
+class ContrastiveLoss(nn.Module):
+    def __init__(self, margin=1.0):
+        super(ContrastiveLoss, self).__init__()
+        self.margin = margin
+
+    def forward(self, anchor_emb, positive_emb, negative_emb):
+        pos_dist = torch.nn.functional.pairwise_distance(anchor_emb, positive_emb)
+        neg_dist = torch.nn.functional.pairwise_distance(anchor_emb, negative_emb)
+        pos_loss = 0.5 * (pos_dist ** 2)
+        neg_loss = 0.5 * torch.clamp(self.margin - neg_dist, min=0) ** 2
+        loss = pos_loss.mean() + neg_loss.mean()
+        return loss
 
 def main():
     args = parse_args()
 
     accelerator = Accelerator()
-    # Initialize W&B
+    accelerator.init_trackers("contrastive_learning", config=vars(args))
+
     if accelerator.is_main_process:
         wandb.init(project=args.wandb_project, entity=args.wandb_entity, name=args.wandb_run_name)
         wandb.config.update(vars(args))
 
-    # Create output directory
     os.makedirs(args.output_dir, exist_ok=True)
 
     transform = transforms.Compose([
-        transforms.Resize((224, 224)),
-        transforms.ToTensor()
+        transforms.Resize((1024, 1024)),
+        transforms.ToTensor(),
+        transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    train_dataset = FD_Dataset(data_path=args.data_path, raw_data_path=args.raw_data_path, mode='train', transform=transform)
-    val_dataset = FD_Dataset(data_path=args.data_path, raw_data_path=args.raw_data_path, mode='valid', transform=transform)
+    train_dataset = ANP_Dataset(data_path=args.augmented_file_path, mode='train', transform=transform)
+    val_dataset = ANP_Dataset(data_path=args.augmented_file_path, mode='valid', transform=transform)
+    eval_dataset = eval_AP_Dataset(data_path=args.augmented_file_path, transform=transform)
 
-    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True, collate_fn=collate_fn)
-    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False, collate_fn=collate_fn)
+    # train_loader와 val_loader는 triplet (anchor, positive, negative) 반환
+    train_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True,
+                              collate_fn=collate_fn_triplet, num_workers=args.num_workers)
+    val_loader = DataLoader(val_dataset, batch_size=args.batch_size, shuffle=False,
+                            collate_fn=collate_fn_triplet, num_workers=args.num_workers)
 
-    anchor_model = get_model(args.resnet_type, args.pretrained)
-    posneg_model = get_model(args.resnet_type, args.pretrained)
+    # eval_loader는 (anchor, image, label) 반환
+    eval_loader = DataLoader(eval_dataset, batch_size=args.batch_size, shuffle=False,
+                            collate_fn=collate_fn_eval, num_workers=args.num_workers)
+
+    anchor_model = get_model(args.pretrained)
+    posneg_model = get_model(args.pretrained)
 
     optimizer = optim.Adam(list(anchor_model.parameters()) + list(posneg_model.parameters()), lr=args.lr)
-    triplet_loss_fn = nn.TripletMarginLoss(margin=1.0)
+    contrastive_loss_fn = ContrastiveLoss(margin=1.0)
 
-    anchor_model, posneg_model, optimizer, train_loader, val_loader = accelerator.prepare(
-        anchor_model, posneg_model, optimizer, train_loader, val_loader
+    anchor_model, posneg_model, optimizer, train_loader, val_loader, eval_loader = accelerator.prepare(
+        anchor_model, posneg_model, optimizer, train_loader, val_loader, eval_loader
     )
 
-    def get_embeddings(anchors, positives, negatives):
-        # Now anchors, positives, negatives are all already Tensors on CPU
-        # Move them to device
+    global_step = 0
+    total_steps = len(train_loader) * args.epochs
+
+    def get_embeddings_for_triplet(anchors, positives, negatives):
         anchors = anchors.to(accelerator.device)
         positives = positives.to(accelerator.device)
         negatives = negatives.to(accelerator.device)
@@ -108,53 +144,110 @@ def main():
 
         return anchor_emb, positive_emb, negative_emb
 
-    def run_epoch(loader, training=True):
-        if training:
-            anchor_model.train()
-            posneg_model.train()
-        else:
-            anchor_model.eval()
-            posneg_model.eval()
-
+    def train_one_epoch(loader, pbar):
+        nonlocal global_step
+        anchor_model.train()
+        posneg_model.train()
         total_loss = 0.0
         total_samples = 0
 
         for anchors, positives, negatives in loader:
-            if training:
-                optimizer.zero_grad()
+            optimizer.zero_grad()
+            anchor_emb, positive_emb, negative_emb = get_embeddings_for_triplet(anchors, positives, negatives)
+            loss = contrastive_loss_fn(anchor_emb, positive_emb, negative_emb)
+            accelerator.backward(loss)
+            optimizer.step()
 
-            with torch.set_grad_enabled(training):
-                anchor_emb, positive_emb, negative_emb = get_embeddings(anchors, positives, negatives)
-                loss = triplet_loss_fn(anchor_emb, positive_emb, negative_emb)
+            batch_size = anchors.size(0)
+            total_loss += loss.item() * batch_size
+            total_samples += batch_size
 
-                if training:
-                    accelerator.backward(loss)
-                    optimizer.step()
-
-            total_loss += loss.item() * anchors.size(0)
-            total_samples += anchors.size(0)
+            if accelerator.is_main_process:
+                global_step += 1
+                wandb.log({"step_loss": loss.item()})
+                pbar.update(1)
+                pbar.set_postfix(loss=loss.item())
 
         avg_loss = total_loss / total_samples
         return avg_loss
 
-    for epoch in range(1, args.epochs + 1):
-        train_loss = run_epoch(train_loader, training=True)
-        if epoch % args.eval_every == 0:
-            val_loss = run_epoch(val_loader, training=False)
+    def validate_one_epoch(loader):
+        # Validation loss 계산
+        anchor_model.eval()
+        posneg_model.eval()
+        total_loss = 0.0
+        total_samples = 0
 
+        with torch.no_grad():
+            for anchors, positives, negatives in loader:
+                anchor_emb, positive_emb, negative_emb = get_embeddings_for_triplet(anchors, positives, negatives)
+                loss = contrastive_loss_fn(anchor_emb, positive_emb, negative_emb)
+                batch_size = anchors.size(0)
+                total_loss += loss.item() * batch_size
+                total_samples += batch_size
+
+        avg_loss = total_loss / total_samples if total_samples > 0 else 0
+        return avg_loss
+
+    def evaluate(loader, threshold=0.5):
+        anchor_model.eval()
+        posneg_model.eval()
+
+        correct = 0
+        total = 0
+
+        with torch.no_grad():
+            for anchors, images, labels in loader:
+                anchors = anchors.to(accelerator.device)
+                images = images.to(accelerator.device)
+                anchor_emb = anchor_model(anchors)
+                image_emb = posneg_model(images)
+
+                anchor_emb = normalize(anchor_emb, p=2, dim=1)
+                image_emb = normalize(image_emb, p=2, dim=1)
+
+                dist = torch.nn.functional.pairwise_distance(anchor_emb, image_emb)
+                pred_positive = dist < threshold
+
+                for p, lbl in zip(pred_positive, labels):
+                    # lbl == "normal": positive 정답
+                    # lbl == "fraud": negative 정답
+                    if lbl == "normal" and p.item() == True:
+                        correct += 1
+                    elif lbl == "fraud" and p.item() == False:
+                        correct += 1
+                    total += 1
+
+        accuracy = correct / total if total > 0 else 0
+        return accuracy
+
+    pbar = None
+    if accelerator.is_main_process:
+        pbar = tqdm(total=total_steps, desc="Overall Training Progress", leave=True)
+
+    for epoch in range(args.epochs):
+        train_loss = train_one_epoch(train_loader, pbar)
+        val_loss = validate_one_epoch(val_loader)  # validation loss 계산
+
+        if (epoch + 1) % args.eval_epoch == 0:
+            val_acc = evaluate(eval_loader)
             if accelerator.is_main_process:
-                wandb.log({"train_loss": train_loss, "val_loss": val_loss, "epoch": epoch})
+                wandb.log({"train_loss": train_loss, "val_loss": val_loss, "val_accuracy": val_acc, "epoch": epoch+1})
+        else:
+            if accelerator.is_main_process:
+                wandb.log({"train_loss": train_loss, "val_loss": val_loss, "epoch": epoch+1})
+
+        if (epoch + 1) % args.save_epoch == 0:
+            if accelerator.is_main_process:
                 torch.save({
                     'epoch': epoch,
                     'anchor_model_state': anchor_model.state_dict(),
                     'posneg_model_state': posneg_model.state_dict(),
                     'optimizer_state': optimizer.state_dict(),
-                }, os.path.join(args.output_dir, f"checkpoint_epoch_{epoch}.pt"))
-        else:
-            if accelerator.is_main_process:
-                wandb.log({"train_loss": train_loss, "epoch": epoch})
+                }, os.path.join(args.output_dir, f"checkpoint_epoch_{epoch+1}.pt"))
 
     if accelerator.is_main_process:
+        pbar.close()
         wandb.finish()
 
 if __name__ == "__main__":

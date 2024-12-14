@@ -5,3 +5,5 @@
 *.png
 *.csv
 data/raw/rotated
+wandb
+*pycache*
