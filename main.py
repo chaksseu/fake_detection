@@ -22,8 +22,9 @@ def parse_args():
     parser.add_argument("--lr", type=float, default=1e-4, help="Learning rate")
     parser.add_argument("--epochs", type=int, default=10, help="Number of training epochs")
     parser.add_argument("--eval_epoch", type=int, default=1, help="Evaluate every n epochs")
-    parser.add_argument("--save_epoch", type=int, default=1, help="Save model every n epochs")
+    parser.add_argument("--save_epoch", type=int, default=10, help="Save model every n epochs")
     parser.add_argument("--num_workers", type=int, default=4, help="Number of workers for DataLoader")
+    parser.add_argument("--gradient_accumulation_steps", type=int, default=1, help="Number of steps to accumulate gradients before stepping optimizer")
 
     # Model parameters
     parser.add_argument("--pretrained", action="store_true", help="Use pretrained ConvNeXt")
@@ -97,13 +98,13 @@ def main():
     os.makedirs(args.output_dir, exist_ok=True)
 
     transform = transforms.Compose([
-        transforms.Resize((1024, 1024)),
+        transforms.Resize((512, 512)),
         transforms.ToTensor(),
         transforms.Normalize(mean=[0.485, 0.456, 0.406], std=[0.229, 0.224, 0.225])
     ])
 
-    train_dataset = ANP_Dataset(data_path=args.augmented_file_path, mode='train', transform=transform)
-    val_dataset = ANP_Dataset(data_path=args.augmented_file_path, mode='valid', transform=transform)
+    train_dataset = ANP_Dataset(augmented_file_path=args.augmented_file_path, mode='train', transform=transform)
+    val_dataset = ANP_Dataset(augmented_file_path=args.augmented_file_path, mode='valid', transform=transform)
     eval_dataset = eval_AP_Dataset(data_path=args.augmented_file_path, transform=transform)
 
     # train_loader와 val_loader는 triplet (anchor, positive, negative) 반환
@@ -151,22 +152,26 @@ def main():
         total_loss = 0.0
         total_samples = 0
 
-        for anchors, positives, negatives in loader:
-            optimizer.zero_grad()
+        optimizer.zero_grad(set_to_none=True)
+        for step, (anchors, positives, negatives) in enumerate(loader):
             anchor_emb, positive_emb, negative_emb = get_embeddings_for_triplet(anchors, positives, negatives)
             loss = contrastive_loss_fn(anchor_emb, positive_emb, negative_emb)
+            loss = loss / args.gradient_accumulation_steps
             accelerator.backward(loss)
-            optimizer.step()
 
             batch_size = anchors.size(0)
-            total_loss += loss.item() * batch_size
+            total_loss += loss.item() * args.gradient_accumulation_steps * batch_size
             total_samples += batch_size
 
-            if accelerator.is_main_process:
-                global_step += 1
-                wandb.log({"step_loss": loss.item()})
-                pbar.update(1)
-                pbar.set_postfix(loss=loss.item())
+            if (step + 1) % args.gradient_accumulation_steps == 0:
+                optimizer.step()
+                optimizer.zero_grad(set_to_none=True)
+
+                if accelerator.is_main_process:
+                    global_step += 1
+                    wandb.log({"step_loss": loss.item() * args.gradient_accumulation_steps})
+                    pbar.update(1)
+                    pbar.set_postfix(loss=loss.item() * args.gradient_accumulation_steps)
 
         avg_loss = total_loss / total_samples
         return avg_loss
@@ -193,8 +198,10 @@ def main():
         anchor_model.eval()
         posneg_model.eval()
 
-        correct = 0
-        total = 0
+        correct_normal = 0
+        correct_fraud = 0
+        total_normal = 0
+        total_fraud = 0
 
         with torch.no_grad():
             for anchors, images, labels in loader:
@@ -209,16 +216,41 @@ def main():
                 dist = torch.nn.functional.pairwise_distance(anchor_emb, image_emb)
                 pred_positive = dist < threshold
 
+                # lbl == "normal": positive 정답, lbl == "fraud": negative 정답
                 for p, lbl in zip(pred_positive, labels):
-                    # lbl == "normal": positive 정답
-                    # lbl == "fraud": negative 정답
-                    if lbl == "normal" and p.item() == True:
-                        correct += 1
-                    elif lbl == "fraud" and p.item() == False:
-                        correct += 1
-                    total += 1
+                    if lbl == "normal":
+                        total_normal += 1
+                        # 정답이 normal이면 pred_positive가 True일 때 정답 맞춤
+                        if p.item():
+                            correct_normal += 1
+                    elif lbl == "fraud":
+                        total_fraud += 1
+                        # 정답이 fraud이면 pred_positive가 False일 때 정답 맞춤
+                        if not p.item():
+                            correct_fraud += 1
 
-        accuracy = correct / total if total > 0 else 0
+        # 각 클래스별 정확도
+        accuracy_normal = correct_normal / total_normal if total_normal > 0 else 0.0
+        accuracy_fraud = correct_fraud / total_fraud if total_fraud > 0 else 0.0
+
+        # 전체 정확도
+        total = total_normal + total_fraud
+        correct = correct_normal + correct_fraud
+        accuracy = correct / total if total > 0 else 0.0
+
+        # 필요하다면 wandb나 로그에 추가적으로 기록
+        if accelerator.is_main_process:
+            wandb.log({
+                "accuracy_normal": accuracy_normal,
+                "accuracy_fraud": accuracy_fraud,
+                "overall_accuracy": accuracy,
+                "total_samples": total,
+                "total_normal": total_normal,
+                "total_fraud": total_fraud,
+                "correct_normal": correct_normal,
+                "correct_fraud": correct_fraud
+            })
+
         return accuracy
 
     pbar = None

@@ -3,7 +3,7 @@
 # 기본 설정
 DATA_PATH="./data/processed"
 OUTPUT_PATH="./data/augmented"
-NUM_COLOR_JITTER=100
+NUM_COLOR_JITTER=20
 NUM_NEG=100
 
 # mode별 설정

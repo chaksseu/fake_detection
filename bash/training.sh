@@ -14,11 +14,12 @@ START_TIME=$(date +%s)
 CUDA_VISIBLE_DEVICES=0 accelerate launch --mixed_precision="fp16" main.py \
   --augmented_file_path "./data/augmented/" \
   --output_dir "./results" \
-  --batch_size 16 \
+  --batch_size 8 \
+  --gradient_accumulation_steps 4 \
   --lr 1e-4 \
-  --epochs 100 \
-  --eval_epoch 10 \
-  --resnet_type "resnet50" \
+  --epochs 1000 \
+  --eval_epoch 1 \
+  --save_epoch 100 \
   --num_workers 4 \
   --pretrained \
   --wandb_project "fake_detection" \

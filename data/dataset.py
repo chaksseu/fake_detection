@@ -159,7 +159,7 @@ class ANP_Dataset(Dataset):
         anchor_image = Image.open(anchor_path).convert("RGB")
 
         # positive 이미지 로드
-        pos_files = [os.path.join(pos_dir, f) for f in os.listdir(pos_dir) if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+        pos_files = [os.path.join(pos_dir, f) for f in os.listdir(pos_dir) if f.lower().endswith(('original.png', '.jpg', '.jpeg'))]
         pos_path = random.choice(pos_files)
         positive_image = Image.open(pos_path).convert("RGB")
 
@@ -233,7 +233,7 @@ class eval_AP_Dataset(Dataset):
 
         # positive 이미지 로드
         pos_files = [os.path.join(pos_dir, f) for f in os.listdir(pos_dir)
-                      if f.lower().endswith(('.png', '.jpg', '.jpeg'))]
+                      if f.lower().endswith(('original.png', '.jpg', '.jpeg'))]
         pos_path = random.choice(pos_files)
         positive_image = Image.open(pos_path).convert("RGB")
 

@@ -37,13 +37,15 @@ def random_color_jitter(image):
 
     return image
 
+def resize_to_1000(img_path):
+    # 이미지를 다시 로드하고 1000x1000으로 리사이즈 후 덮어쓰기
+    img = Image.open(img_path)
+    resized_img = img.resize((1000, 1000), Image.BILINEAR)
+    resized_img.save(img_path)
+
 def validate_excluded_images(data_path, data_type, mode, output_path, num_pseudo=5, num_color_jitter=5, generate_negatives=True):
     # CSV 로드
     meta_data = load_csv(data_path, data_type, mode)
-
-    # # 랜덤 샘플 하나만 선택
-    # meta_data = meta_data.sample(n=3)
-    # print(f"Randomly selected sample: {meta_data.iloc[0]['file']}")
 
     # 기본 출력 경로: /data/augment/train/normal/
     base_output_dir = os.path.join(output_path, mode, data_type)
@@ -102,15 +104,17 @@ def validate_excluded_images(data_path, data_type, mode, output_path, num_pseudo
         anchor_path = os.path.join(anchor_dir, "anchor.png")
         excluded_img.save(anchor_path)
 
-
-        # pos 이미지 생성 (cropped_{file_name}.png) -> anchor에 붙여 저장
+        # pos 이미지 생성 (cropped_{file_name}.png)
         cropped_file_name = f"cropped_{os.path.splitext(file_name)[0]}.png"
         cropped_path = os.path.join(cropped_dir, cropped_file_name)
         if os.path.exists(cropped_path):
             cropped_img = Image.open(cropped_path).convert("RGB").resize((bbox_width, bbox_height), Image.BILINEAR)
             combined_pos_img = excluded_img.copy()
             combined_pos_img.paste(cropped_img, (x1, y1))
-            combined_pos_img.save(os.path.join(pos_dir, "pos_original.png"))
+            pos_original_path = os.path.join(pos_dir, "pos_original.png")
+            combined_pos_img.save(pos_original_path)
+            # 1000x1000 리사이즈
+            resize_to_1000(pos_original_path)
 
             # 색조 변조된 pos 이미지 생성 및 저장
             for j in range(num_color_jitter):
@@ -119,14 +123,14 @@ def validate_excluded_images(data_path, data_type, mode, output_path, num_pseudo
                 combined_jittered_img.paste(jittered_img, (x1, y1))
                 jittered_path = os.path.join(pos_dir, f"pos_{j}.png")
                 combined_jittered_img.save(jittered_path)
+                resize_to_1000(jittered_path)
         else:
             print(f"Pos image not found: {cropped_path}. Skipping pos image for {file_name}.")
 
         # Negative 이미지 생성 및 저장 (옵션 활성화 시)
         if generate_negatives:
-            # N개의 pseudo negative 이미지 생성 및 저장
-            num_to_generate = min(len(neg_candidates), num_pseudo)  # neg_candidates 수와 num_pseudo 중 작은 값 선택
-            selected_neg_files = random.sample(list(neg_candidates), num_to_generate)  # 중복되지 않는 파일 선택
+            num_to_generate = min(len(neg_candidates), num_pseudo)
+            selected_neg_files = random.sample(list(neg_candidates), num_to_generate)
 
             for i, neg_file in enumerate(selected_neg_files):
                 neg_cropped_file_name = f"cropped_{os.path.splitext(neg_file)[0]}.png"
@@ -141,26 +145,19 @@ def validate_excluded_images(data_path, data_type, mode, output_path, num_pseudo
                     print(f"Error loading negative image {neg_cropped_path}: {e}")
                     continue
 
-                # bounding box 크기에 맞게 negative 이미지 resize
                 resized_neg = neg_img.resize((bbox_width, bbox_height), Image.BILINEAR)
-
-                # 원본 excluded 이미지 복사 후 negative paste
                 pseudo_img = excluded_img.copy()
                 pseudo_img.paste(resized_neg, (x1, y1))
 
-                # pseudo negative 이미지 저장
                 pseudo_path = os.path.join(neg_dir, f"neg_{i}.png")
                 pseudo_img.save(pseudo_path)
+                # 1000x1000 리사이즈
+                resize_to_1000(pseudo_path)
+
+        # anchor 이미지도 후처리 리사이즈 (필요하다면)
+        resize_to_1000(anchor_path)
+
     print(f"Augmentation images saved in {base_output_dir}")
-
-# if __name__ == "__main__":
-#     DATA_PATH = "./data/processed"
-#     DATA_TYPE = "normal"
-#     MODE = "train"
-#     OUTPUT_PATH = "./data/augment"
-
-#     # 예: 100개의 pseudo negative 이미지 생성
-#     validate_excluded_images(DATA_PATH, DATA_TYPE, MODE, OUTPUT_PATH, num_pseudo=100, num_color_jitter=20)
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Generate augmented images with optional negatives.")

@@ -7,3 +7,4 @@
 data/raw/rotated
 wandb
 *pycache*
+*.zip
