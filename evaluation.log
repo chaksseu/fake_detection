@@ -1,0 +1,61 @@
+wandb: Using wandb-core as the SDK backend.  Please refer to https://wandb.me/wandb-core for more information.
+wandb: Currently logged in as: rtrt505 (noah_). Use `wandb login --relogin` to force relogin
+wandb: Tracking run with wandb version 0.19.1
+wandb: Run data is saved locally in /home/jovyan/fileviewer/Noris/fake_detection/wandb/run-20241219_161811-3520o0mg
+wandb: Run `wandb offline` to turn off syncing.
+wandb: Syncing run Noris_ocr_evaluation
+wandb: ⭐️ View project at https://wandb.ai/noah_/fake_detection_evaluation
+wandb: 🚀 View run at https://wandb.ai/noah_/fake_detection_evaluation/runs/3520o0mg
+wandb:                                                                                
+wandb: 
+wandb: Run history:
+wandb:         accuracy_fraud ▁
+wandb:        accuracy_normal ▁
+wandb:          correct_fraud ▁
+wandb:         correct_normal ▁
+wandb: difference_of_distance ▁
+wandb:               f1_fraud ▁
+wandb:              f1_normal ▁
+wandb:      mean_all_distance ▁
+wandb:    mean_fraud_distance ▁
+wandb:   mean_normal_distance ▁
+wandb:       overall_accuracy ▁
+wandb:        precision_fraud ▁
+wandb:       precision_normal ▁
+wandb:           recall_fraud ▁
+wandb:          recall_normal ▁
+wandb:            total_fraud ▁
+wandb:           total_normal ▁
+wandb:          total_samples ▁
+wandb: 
+wandb: Run summary:
+wandb:         accuracy_fraud 0.67949
+wandb:        accuracy_normal 0.71429
+wandb:          correct_fraud 53
+wandb:         correct_normal 35
+wandb: difference_of_distance 0.33553
+wandb:               f1_fraud 0.73103
+wandb:              f1_normal 0.6422
+wandb:      mean_all_distance 0.40992
+wandb:    mean_fraud_distance 0.57769
+wandb:   mean_normal_distance 0.24216
+wandb:       overall_accuracy 0.69291
+wandb:        precision_fraud 0.79104
+wandb:       precision_normal 0.58333
+wandb:           recall_fraud 0.67949
+wandb:          recall_normal 0.71429
+wandb:            total_fraud 78
+wandb:           total_normal 49
+wandb:          total_samples 127
+wandb: 
+wandb: 🚀 View run Noris_ocr_evaluation at: https://wandb.ai/noah_/fake_detection_evaluation/runs/3520o0mg
+wandb: ⭐️ View project at: https://wandb.ai/noah_/fake_detection_evaluation
+wandb: Synced 5 W&B file(s), 0 media file(s), 0 artifact file(s) and 0 other file(s)
+wandb: Find logs at: ./wandb/run-20241219_161811-3520o0mg/logs
+Overall Accuracy: 0.6929
+Accuracy Normal: 0.7143
+Accuracy Fraud: 0.6795
+Precision Normal: 0.5833, Recall Normal: 0.7143, F1 Normal: 0.6422
+Precision Fraud: 0.7910, Recall Fraud: 0.6795, F1 Fraud: 0.7310
+Mean Normal Distance: 0.2422, Mean Fraud Distance: 0.5777
+Difference of Distance: 0.3355

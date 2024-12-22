@@ -5,7 +5,7 @@
 # ------------------------------------------------------------------------------------
 
 # W&B API Key 설정
-export WANDB_API_KEY="13d9653af6ac2f7f8ea29413f4c8eaaea35a2717"  # 여기에 본인의 W&B API Key를 입력하세요
+export WANDB_API_KEY="be0eca18374643fcb4fc922e243f869ae65de5b1"  # 여기에 본인의 W&B API Key를 입력하세요
 
 # 실행 시작 시간 기록
 START_TIME=$(date +%s)

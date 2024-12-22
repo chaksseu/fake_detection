@@ -3,7 +3,7 @@
 # 기본 설정
 DATA_PATH="./data/processed"
 OUTPUT_PATH="./data/augmented"
-NUM_COLOR_JITTER=20
+NUM_COLOR_JITTER=10
 NUM_NEG=100
 
 # mode별 설정
@@ -16,7 +16,7 @@ for MODE in "${MODES[@]}"; do
 
         if [ "$DATA_TYPE" == "fraud" ]; then
             # fraud 데이터 처리 (negative 생성 비활성화)
-            python data/test.py \
+            python data/test-gpt.py \
                 --data_path "$DATA_PATH" \
                 --data_type "$DATA_TYPE" \
                 --mode "$MODE" \
@@ -24,14 +24,14 @@ for MODE in "${MODES[@]}"; do
                 --num_color_jitter "$NUM_COLOR_JITTER"
         else
             # normal 데이터 처리
-            python data/test.py \
+            python data/test-gpt.py \
                 --data_path "$DATA_PATH" \
                 --data_type "$DATA_TYPE" \
                 --mode "$MODE" \
                 --output_path "$OUTPUT_PATH" \
                 --num_pseudo "$NUM_NEG" \
                 --num_color_jitter "$NUM_COLOR_JITTER" \
-                --generate_negatives
+                #--generate_negatives
         fi
     done
 done
